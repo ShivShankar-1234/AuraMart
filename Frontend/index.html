@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AuraMart | Premium E-Commerce Experience</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+
+
+    <!-- Custom Style Sheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- Promotion Bar -->
+    <div class="promo-bar">
+        <span>✨ Summer Sale: Up to 50% Off on Selected Premium Items. Free Express Shipping! ✨</span>
+    </div>
+
+    <!-- Navigation Header -->
+    <header class="app-header">
+        <div class="header-container">
+            <a href="#/" class="logo">
+                <span class="logo-accent">Aura</span>Mart
+            </a>
+
+            <nav class="nav-menu" id="nav-links">
+                <a href="#/" class="nav-item active" id="nav-home">Home</a>
+                <a href="#/shop" class="nav-item" id="nav-shop">Shop</a>
+                <a href="#/tracker" class="nav-item customer-only hidden" id="nav-tracker"><i
+                        class="fa-solid fa-bolt"></i> Live Tracking</a>
+            </nav>
+
+            <div class="search-bar-container">
+                <input type="text" id="global-search" placeholder="Search premium products...">
+                <button type="button" id="search-btn"><i class="fa-solid fa-magnifying-glass"></i></button>
+            </div>
+
+            <div class="header-actions">
+                <!-- Theme Toggle -->
+                <button id="theme-toggle" class="action-btn" title="Toggle Dark/Light Mode">
+                    <i class="fa-solid fa-moon"></i>
+                </button>
+
+                <!-- Cart Button -->
+                <button id="cart-toggle-btn" class="action-btn cart-btn">
+                    <i class="fa-solid fa-bag-shopping"></i>
+                    <span class="cart-badge" id="cart-count">0</span>
+                </button>
+
+                <!-- Auth/User Menu -->
+                <div class="user-menu-container">
+                    <button id="user-menu-btn" class="action-btn user-btn">
+                        <i class="fa-regular fa-user"></i>
+                        <span class="user-name-label" id="user-label">Login</span>
+                    </button>
+                    <div class="user-dropdown hidden" id="user-dropdown">
+                        <div class="dropdown-header">
+                            <h4 id="dropdown-user-name">Welcome!</h4>
+                            <p id="dropdown-user-email">Please log in to your account</p>
+                        </div>
+                        <hr class="dropdown-divider">
+                        <div class="dropdown-links" id="dropdown-actions">
+                            <!-- Dynamically loaded based on Auth status -->
+                            <a href="#/auth" class="dropdown-item"><i class="fa-solid fa-sign-in-alt"></i> Login /
+                                Register</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main id="app-content" class="main-content">
+        <!-- Views will be dynamically loaded here by app.js -->
+        <div class="loader-container" id="main-loader">
+            <div class="spinner"></div>
+            <p>Curating your experience...</p>
+        </div>
+    </main>
+
+    <!-- Cart Drawer (Slides from Right) -->
+    <aside class="cart-drawer" id="cart-drawer">
+        <div class="cart-drawer-backdrop" id="cart-drawer-backdrop"></div>
+        <div class="cart-drawer-content">
+            <div class="cart-drawer-header">
+                <h3>Your Bag <span class="cart-drawer-count" id="cart-drawer-count">(0)</span></h3>
+                <button class="close-drawer-btn" id="close-cart-btn">&times;</button>
+            </div>
+
+            <div class="cart-drawer-body" id="cart-items-container">
+                <!-- Cart items will be loaded dynamically -->
+                <div class="empty-cart-view">
+                    <i class="fa-solid fa-bag-shopping empty-cart-icon"></i>
+                    <p>Your shopping bag is currently empty.</p>
+                    <a href="#/shop" class="btn btn-primary close-cart-cta-btn">Start Shopping</a>
+                </div>
+            </div>
+
+            <div class="cart-drawer-footer">
+                <div class="cart-summary-row">
+                    <span>Subtotal</span>
+                    <span class="cart-total-price" id="cart-subtotal">₹0.00</span>
+                </div>
+                <p class="cart-shipping-info">Shipping and taxes calculated at checkout.</p>
+                <div class="cart-drawer-actions">
+                    <button class="btn btn-secondary w-full" id="clear-cart-btn">Clear Cart</button>
+                    <button class="btn btn-primary w-full" id="checkout-btn">Checkout</button>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Toast Notification Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Product Details Modal -->
+    <div class="modal hidden" id="product-modal">
+        <div class="modal-backdrop" id="product-modal-backdrop"></div>
+        <div class="modal-content product-detail-modal">
+            <button class="close-modal-btn" id="close-product-modal">&times;</button>
+            <div class="modal-body" id="product-modal-body">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Payment Gateway Processing Modal -->
+    <div class="modal hidden" id="gateway-processing-overlay">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content text-center"
+            style="max-width: 420px; padding: 40px; border-radius: var(--border-radius-lg); text-align: center;">
+            <div class="spinner" style="margin: 0 auto 24px auto;"></div>
+            <h3 style="font-size: 1.5rem; margin-bottom: 8px;">Securing Payment Gateway...</h3>
+            <p id="gateway-progress-label" style="color: var(--text-secondary); font-size: 0.95rem;">Establishing secure
+                link with bank network...</p>
+        </div>
+    </div>
+
+
+    <!-- Footer -->
+    <footer class="app-footer">
+        <div class="footer-container">
+            <div class="footer-brand-section">
+                <a href="#/" class="logo"><span class="logo-accent">Aura</span>Mart</a>
+                <p class="footer-tagline">Crafting modern shopping experiences with sleek styles and micro-interactions.
+                </p>
+                <div class="social-links">
+                    <a href="#"><i class="fa-brands fa-x-twitter"></i></a>
+                    <a href="#"><i class="fa-brands fa-instagram"></i></a>
+                    <a href="#"><i class="fa-brands fa-facebook"></i></a>
+                    <a href="#"><i class="fa-brands fa-github"></i></a>
+                </div>
+            </div>
+
+            <div class="footer-links-grid">
+                <div class="footer-column">
+                    <h4>Shop</h4>
+                    <a href="#/shop?category=Electronics">Electronics</a>
+                    <a href="#/shop?category=Fashion">Fashion</a>
+                    <a href="#/shop?category=Home%20%26%20Living">Home & Living</a>
+                    <a href="#/shop?category=Accessories">Accessories</a>
+                </div>
+                <div class="footer-column">
+                    <h4>Support</h4>
+                    <a href="#">Contact Us</a>
+                    <a href="#">FAQs</a>
+                    <a href="#">Shipping & Returns</a>
+                    <a href="#">Privacy Policy</a>
+                </div>
+                <div class="footer-column">
+                    <h4>Developer</h4>
+                    <a href="/admin.html" target="_blank">Owner Portal</a>
+                    <a href="/delivery.html" target="_blank">Rider Portal</a>
+                    <a href="#/auth">Account Portal</a>
+                    <a href="https://github.com">GitHub Repository</a>
+                    <span class="badge-tech">Node.js + Express + MongoDB</span>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 AuraMart. All rights reserved. Created with premium UI designs.</p>
+        </div>
+    </footer>
+
+    <!-- Main Application Script -->
+    <script src="app.js"></script>
+</body>
+
+</html>

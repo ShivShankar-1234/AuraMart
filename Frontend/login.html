@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AuraMart | Customer Login</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom Style Sheet -->
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: var(--bg-app);
+            padding: 20px;
+        }
+
+        .login-card {
+            width: 100%;
+            max-width: 440px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-lg);
+            padding: 40px;
+            box-shadow: var(--shadow-xl);
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .login-header h2 {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+
+        .login-logo {
+            font-size: 2.25rem;
+            font-weight: 800;
+            margin-bottom: 15px;
+            display: inline-block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .input-wrapper i {
+            position: absolute;
+            left: 14px;
+            color: var(--text-muted);
+        }
+
+        .input-wrapper input {
+            width: 100%;
+            padding: 12px 14px 12px 42px;
+            background: var(--bg-surface-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-md);
+            color: var(--text-primary);
+            transition: all var(--transition-fast);
+        }
+
+        .input-wrapper input:focus {
+            background: var(--bg-surface);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
+        .toggle-form-btn {
+            color: var(--primary);
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .toggle-form-btn:hover {
+            color: var(--primary-hover);
+        }
+
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+
+        .toast {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            padding: 14px 20px;
+            border-radius: var(--border-radius-md);
+            box-shadow: var(--shadow-lg);
+            margin-bottom: 10px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .toast-success {
+            border-left: 4px solid var(--success);
+        }
+
+        .toast-error {
+            border-left: 4px solid var(--danger);
+        }
+
+        .toast-icon {
+            font-size: 1.2rem;
+        }
+
+        .toast-success .toast-icon {
+            color: var(--success);
+        }
+
+        .toast-error .toast-icon {
+            color: var(--danger);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="login-card">
+        <div class="login-header">
+            <a href="/" class="login-logo"><span class="logo-accent">Aura</span>Mart</a>
+            <h2 id="form-title">Welcome Back</h2>
+            <p id="form-desc" style="color: var(--text-secondary); font-size: 0.95rem;">Enter your credentials to access
+                your shopping bag.</p>
+        </div>
+
+        <form id="auth-form">
+            <div class="form-group hidden" id="name-group">
+                <label for="name">Your Name</label>
+                <div class="input-wrapper">
+                    <i class="fa-regular fa-user"></i>
+                    <input type="text" id="name" placeholder="John Doe">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <div class="input-wrapper">
+                    <i class="fa-regular fa-envelope"></i>
+                    <input type="email" id="email" required placeholder="name@example.com">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <div class="input-wrapper">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="password" required placeholder="••••••••">
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-full" style="margin-top: 10px;" id="submit-btn" disabled>
+                Sign In
+            </button>
+        </form>
+
+        <p id="toggle-form-text"
+            style="text-align: center; margin-top: 24px; font-size: 0.9rem; color: var(--text-secondary);">
+            Don't have an account? <span class="toggle-form-btn" id="toggle-form-type">Sign Up</span>
+        </p>
+    </div>
+
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        let isLogin = true;
+
+        const authForm = document.getElementById("auth-form");
+        const formTitle = document.getElementById("form-title");
+        const formDesc = document.getElementById("form-desc");
+        const nameGroup = document.getElementById("name-group");
+        const nameInput = document.getElementById("name");
+        const emailInput = document.getElementById("email");
+        const passwordInput = document.getElementById("password");
+        const submitBtn = document.getElementById("submit-btn");
+        const toggleFormType = document.getElementById("toggle-form-type");
+        const toggleFormText = document.getElementById("toggle-form-text");
+
+        // Enable button when fields are filled
+        function checkInputs() {
+            const emailVal = emailInput.value.trim();
+            const passwordVal = passwordInput.value;
+            const nameVal = nameInput.value.trim();
+            if (isLogin) {
+                submitBtn.disabled = !(emailVal && passwordVal);
+            } else {
+                submitBtn.disabled = !(emailVal && passwordVal && nameVal);
+            }
+        }
+
+        emailInput.addEventListener("input", checkInputs);
+        passwordInput.addEventListener("input", checkInputs);
+        nameInput.addEventListener("input", checkInputs);
+
+        toggleFormType.addEventListener("click", () => {
+            isLogin = !isLogin;
+            if (isLogin) {
+                formTitle.textContent = "Welcome Back";
+                formDesc.textContent = "Enter your credentials to access your shopping bag.";
+                nameGroup.classList.add("hidden");
+                nameInput.removeAttribute("required");
+                submitBtn.textContent = "Sign In";
+                toggleFormText.innerHTML = `Don't have an account? <span class="toggle-form-btn" id="toggle-form-type">Sign Up</span>`;
+            } else {
+                formTitle.textContent = "Create Account";
+                formDesc.textContent = "Sign up for a premium shopping experience.";
+                nameGroup.classList.remove("hidden");
+                nameInput.setAttribute("required", "required");
+                submitBtn.textContent = "Sign Up";
+                toggleFormText.innerHTML = `Already have an account? <span class="toggle-form-btn" id="toggle-form-type">Sign In</span>`;
+            }
+            // Bind newly created span dynamic event since innerHTML changes it
+            document.getElementById("toggle-form-type").addEventListener("click", arguments.callee);
+            checkInputs();
+        });
+
+        authForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            submitBtn.disabled = true;
+            submitBtn.textContent = "Processing...";
+
+            const email = emailInput.value.trim();
+            const password = passwordInput.value;
+            const name = nameInput.value.trim();
+
+            const url = isLogin ? "/api/auth/login" : "/api/auth/register";
+            const payload = isLogin ? { email, password } : { name, email, password };
+
+            try {
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.message || "Authentication failed");
+                }
+
+                showToast(isLogin ? "Welcome back to AuraMart!" : "Account created successfully!", "success");
+
+                // Save Customer session details
+                localStorage.setItem("auth_token", data.token);
+                localStorage.setItem("auth_user", JSON.stringify(data.user || data));
+
+                setTimeout(() => {
+                    window.location.href = "/";
+                }, 1000);
+            } catch (err) {
+                showToast(err.message, "error");
+                submitBtn.disabled = false;
+                submitBtn.textContent = isLogin ? "Sign In" : "Sign Up";
+            }
+        });
+
+        function showToast(message, type = "success") {
+            const container = document.getElementById("toast-container");
+            const toast = document.createElement("div");
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <i class="toast-icon fa-solid ${type === 'success' ? 'fa-circle-check' : 'fa-circle-xmark'}"></i>
+                <div>${message}</div>
+            `;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = "0";
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+    </script>
+</body>
+
+</html>
