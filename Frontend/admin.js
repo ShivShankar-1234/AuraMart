@@ -35,9 +35,28 @@ document.addEventListener("DOMContentLoaded", () => {
     // Theme toggle
     document.getElementById("theme-toggle").addEventListener("click", toggleTheme);
 
-    // Initial Load & Heartbeat refresh loop
+    // Initial Load
     loadData();
-    setInterval(loadOrders, 4000); // Poll orders every 4s for real-time customer checkouts!
+
+    // Socket.IO real-time initialization
+    if (typeof io !== 'undefined') {
+        const adminSocket = io(window.location.origin, { transports: ['websocket', 'polling'] });
+        adminSocket.on('connect', () => {
+            console.log('[Admin] Socket connected:', adminSocket.id);
+            // Join global owner room for new order notifications if needed, though backend currently broadcasts to all admins
+        });
+        // Listen for global hooks
+        adminSocket.on('new_order_placed', (data) => {
+            showToast(`🛒 New order placed by ${data.customerName || 'Customer'}! ₹${data.totalAmount?.toFixed(2)}`, 'info');
+            loadOrders();
+        });
+        adminSocket.on('order_status_changed_global', (data) => {
+            loadOrders();
+        });
+    } else {
+        console.warn('[Admin] Socket.IO not loaded, falling back to polling');
+        setInterval(loadOrders, 6000);
+    }
 });
 
 // Load Products and Orders
@@ -45,6 +64,7 @@ async function loadData() {
     showGlobalLoader(true);
     await checkConnection();
     await loadProducts();
+    await loadRiders();
     await loadOrders();
     showGlobalLoader(false);
 }
@@ -211,6 +231,7 @@ function updateMetrics() {
     if (totalOrdersEl) totalOrdersEl.textContent = totalCount;
 
     // Order status categories
+    const pendingApprovalCount = state.orders.filter(o => o.status === "pending_approval").length;
     const placedCount = state.orders.filter(o => o.status === "placed").length;
     const acceptedCount = state.orders.filter(o => o.status === "accepted").length;
     const preparedCount = state.orders.filter(o => o.status === "prepared").length;
@@ -219,11 +240,11 @@ function updateMetrics() {
     const cancelledCount = state.orders.filter(o => o.status === "cancelled").length;
 
     const metricsHTML = `
-        <div style="background: var(--bg-surface-secondary); padding: 8px; border-radius: var(--border-radius-sm); border: 1px solid var(--border-color); text-align: center;">
-            <strong>Total:</strong> <span style="font-weight:700; color:var(--primary);">${totalCount}</span>
+        <div style="background: rgba(245,158,11,0.05); padding: 8px; border-radius: var(--border-radius-sm); border: 1px solid rgba(245,158,11,0.3); text-align: center;">
+            <strong>Pending:</strong> <span style="font-weight:700; color:var(--warning);">${pendingApprovalCount}</span>
         </div>
         <div style="background: var(--bg-surface-secondary); padding: 8px; border-radius: var(--border-radius-sm); border: 1px solid var(--border-color); text-align: center;">
-            <strong>Placed:</strong> <span style="font-weight:700; color:var(--danger);">${placedCount}</span>
+            <strong>Total:</strong> <span style="font-weight:700; color:var(--primary);">${totalCount}</span>
         </div>
         <div style="background: var(--bg-surface-secondary); padding: 8px; border-radius: var(--border-radius-sm); border: 1px solid var(--border-color); text-align: center;">
             <strong>Preparing:</strong> <span style="font-weight:700; color:var(--accent);">${acceptedCount}</span>
@@ -244,6 +265,82 @@ function updateMetrics() {
 
     const metricsContainer = document.getElementById("admin-order-status-metrics");
     if (metricsContainer) metricsContainer.innerHTML = metricsHTML;
+
+    // --- Chart.js Updates ---
+    const ctx = document.getElementById('revenueChart');
+    if (!ctx) return;
+
+    // Group orders by date for the Chart (last 7 days logic)
+    const dailyData = {};
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (6 - i));
+        const dtStr = d.toISOString().split('T')[0];
+        dailyData[dtStr] = { rev: 0, orders: 0 };
+        return dtStr;
+    });
+
+    state.orders.forEach(o => {
+        if (!o.createdAt || o.status === 'cancelled') return;
+        const dStr = new Date(o.createdAt).toISOString().split('T')[0];
+        if (dailyData[dStr]) {
+            dailyData[dStr].orders++;
+            if (o.status !== 'placed') {
+                dailyData[dStr].rev += o.totalAmount;
+            }
+        }
+    });
+
+    const labels = last7Days.map(d => {
+        const date = new Date(d);
+        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    });
+    const revData = last7Days.map(d => dailyData[d].rev);
+
+    if (adminRevenueChart) {
+        adminRevenueChart.data.labels = labels;
+        adminRevenueChart.data.datasets[0].data = revData;
+        adminRevenueChart.update();
+    } else {
+        adminRevenueChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Revenue (₹)',
+                    data: revData,
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: true,
+                    pointBackgroundColor: '#1a1b2e',
+                    pointBorderColor: '#6366f1',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                        ticks: { color: '#9191a8' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                        ticks: { color: '#9191a8', callback: function (value) { return '₹' + value; } }
+                    }
+                }
+            }
+        });
+    }
 }
 
 // Render Products Table
@@ -292,8 +389,8 @@ function renderOrders() {
     const container = document.getElementById("admin-orders-queue-container");
     const countEl = document.getElementById("active-orders-count");
 
-    // Filters only orders in placement/accepted/prepared/dispatched stages
-    const activeOrders = state.orders.filter(o => o.status === "placed" || o.status === "accepted" || o.status === "prepared" || o.status === "dispatched");
+    // Filters active orders including pending approval
+    const activeOrders = state.orders.filter(o => o.status === "pending_approval" || o.status === "placed" || o.status === "accepted" || o.status === "prepared" || o.status === "dispatched");
     countEl.textContent = activeOrders.length;
 
     if (activeOrders.length === 0) {
@@ -311,7 +408,19 @@ function renderOrders() {
         let actionBtn = "";
         let statusBadge = "";
 
-        if (o.status === "placed") {
+        if (o.status === "pending_approval") {
+            statusBadge = `<span class="stock-tag" style="background: rgba(245,158,11,0.12); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); animation: pulseGlow 2s infinite;">⏳ Awaiting Approval</span>`;
+            actionBtn = `
+                <div style="display:flex; flex-direction:column; gap:8px; width:100%;">
+                    <p style="font-size:0.8rem; color:var(--text-secondary); text-align:center; margin:0;">Review the order and approve to begin preparation.</p>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-primary w-full btn-sm" onclick="changeOrderStatusHandler('${o._id}', 'placed')" style="background: linear-gradient(135deg, var(--success), var(--accent)); border:none;">
+                            <i class="fa-solid fa-circle-check"></i> Approve Order
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else if (o.status === "placed") {
             statusBadge = `<span class="stock-tag stock-out" style="background: rgba(239,68,68,0.1); color: var(--danger);">Placed</span>`;
             actionBtn = `<button class="btn btn-primary w-full btn-sm" onclick="changeOrderStatusHandler('${o._id}', 'accepted')"><i class="fa-solid fa-check"></i> Accept Order</button>`;
         } else if (o.status === "accepted") {
@@ -328,10 +437,34 @@ function renderOrders() {
             `;
         } else if (o.status === "prepared") {
             statusBadge = `<span class="stock-tag stock-in" style="background: rgba(245,158,11,0.1); color: var(--warning);">Packed</span>`;
-            actionBtn = `<button class="btn btn-warning w-full btn-sm" onclick="changeOrderStatusHandler('${o._id}', 'dispatched')"><i class="fa-solid fa-truck-fast"></i> Dispatch Order</button>`;
+
+            // Rider Assignment Dropdown
+            const ridersOptions = state.riders.map(r =>
+                `<option value="${r._id}" ${o.deliveryBoy && o.deliveryBoy._id === r._id ? 'selected' : ''}>🛵 ${r.name}</option>`
+            ).join('');
+
+            const hasRiderAssigned = !!o.deliveryBoy;
+
+            actionBtn = `
+                <div style="display:flex; flex-direction:column; gap:12px; width:100%;">
+                    <select class="form-control" style="background:var(--bg-surface-secondary); color:var(--text-primary); border:1px solid var(--border-color); padding:8px; border-radius:var(--border-radius-sm); font-size:0.9rem;" 
+                        onchange="assignOrderRiderHandler('${o._id}', this.value)">
+                        <option value="">-- Assign Delivery Rider --</option>
+                        ${ridersOptions}
+                    </select>
+                    <button class="btn btn-warning w-full btn-sm" onclick="changeOrderStatusHandler('${o._id}', 'dispatched')" ${!hasRiderAssigned ? 'disabled style="opacity: 0.5; cursor: not-allowed;" title="Assign a rider first"' : ''}>
+                        <i class="fa-solid fa-truck-fast"></i> Dispatch Order
+                    </button>
+                </div>
+            `;
         } else if (o.status === "dispatched") {
             statusBadge = `<span class="stock-tag stock-in" style="background: rgba(16,185,129,0.1); color: var(--primary);">Out for Delivery</span>`;
-            actionBtn = `<button class="btn btn-success w-full btn-sm" onclick="changeOrderStatusHandler('${o._id}', 'delivered')"><i class="fa-solid fa-house-circle-check"></i> Deliver Order</button>`;
+            actionBtn = `
+                <div style="text-align:center; font-size:0.85rem; color:var(--text-secondary); width:100%;">
+                    <p style="margin-bottom:8px;">🚚 Handled by <strong style="color:var(--text-primary);">${o.deliveryBoy ? o.deliveryBoy.name : 'Rider'}</strong></p>
+                    <button class="btn btn-success w-full btn-sm" onclick="changeOrderStatusHandler('${o._id}', 'delivered')"><i class="fa-solid fa-house-circle-check"></i> Deliver Order</button>
+                </div>
+            `;
         }
 
         const dateStr = new Date(o.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -399,6 +532,9 @@ function renderOrders() {
 
     updateMetrics();
 }
+
+// Chart Instance
+let adminRevenueChart = null;
 
 // Open Add/Edit Product Modal
 function openProductModal(productId = "") {
@@ -561,9 +697,17 @@ async function apiCall(url, method = "GET", body = null, secure = false) {
         if (body) {
             options.body = JSON.stringify(body);
         }
-        const res = await fetch(url, options);
-        const data = await res.json();
-        return { ok: res.ok, status: res.status, data };
+        const response = await fetch(url, options);
+        const data = await response.json();
+
+        // Globally catch token expiration
+        if (response.status === 401 && !url.includes("/api/auth/login")) {
+            if (window.handleLogout) {
+                window.handleLogout();
+            }
+        }
+
+        return { ok: response.ok, status: response.status, data };
     } catch (err) {
         return { ok: false, status: 500, data: { message: err.message } };
     }

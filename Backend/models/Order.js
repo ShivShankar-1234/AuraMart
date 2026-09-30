@@ -54,8 +54,8 @@ const orderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["placed", "accepted", "prepared", "dispatched", "delivered"],
-      default: "placed",
+      enum: ["pending_approval", "placed", "accepted", "prepared", "dispatched", "delivered"],
+      default: "pending_approval",
     },
     deliveryBoy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -81,6 +81,10 @@ const orderSchema = new mongoose.Schema(
     paymentMethod: {
       type: String,
       default: "Credit Card"
+    },
+    upiId: {
+      type: String,
+      default: ""
     },
     paymentStatus: {
       type: String,

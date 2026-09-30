@@ -4,7 +4,7 @@ const Product = require("../models/Product");
 // Create Order (Customer)
 const createOrder = async (req, res) => {
     try {
-        const { items, totalAmount, shippingAddress, customerLatLng, storeLatLng, paymentMethod, paymentStatus, customerPhone, deliveryInstructions, deliveryAddress } = req.body;
+        const { items, totalAmount, shippingAddress, customerLatLng, storeLatLng, paymentMethod, paymentStatus, customerPhone, deliveryInstructions, deliveryAddress, upiId } = req.body;
 
         if (!items || !Array.isArray(items) || items.length === 0) {
             return res.status(400).json({
@@ -32,7 +32,7 @@ const createOrder = async (req, res) => {
                 });
             }
 
-            const itemPrice = product.price; // DB validated price
+            const itemPrice = product.price;
             const itemTotal = itemPrice * item.quantity;
             dbSubtotal += itemTotal;
 
@@ -63,7 +63,6 @@ const createOrder = async (req, res) => {
             });
         }
 
-        // Estimated delivery time: 10 minutes from now (Zepto style)
         const estimatedTime = new Date(Date.now() + 10 * 60 * 1000);
 
         const order = await Order.create({
@@ -79,7 +78,8 @@ const createOrder = async (req, res) => {
             customerLatLng: customerLatLng || (deliveryAddress ? [deliveryAddress.latitude, deliveryAddress.longitude] : [12.9700, 77.6100]),
             storeLatLng,
             paymentMethod: paymentMethod || "Credit Card",
-            paymentStatus: paymentStatus || "Paid",
+            paymentStatus: paymentStatus === "Pending" ? "Pending" : "Paid",
+            upiId: upiId || "",
             customerPhone: customerPhone || (deliveryAddress ? deliveryAddress.mobile : ""),
             deliveryInstructions: deliveryInstructions || "",
             deliveryAddress: deliveryAddress || {
@@ -90,6 +90,17 @@ const createOrder = async (req, res) => {
                 longitude: (customerLatLng && customerLatLng[1]) || 77.6100
             }
         });
+
+        // Notify admins/owner via socket that a new order was placed
+        const io = req.app.get("io");
+        if (io) {
+            io.emit("new_order_placed", {
+                orderId: order._id,
+                totalAmount: order.totalAmount,
+                customerName: req.user.name,
+                timestamp: Date.now()
+            });
+        }
 
         res.status(201).json({
             success: true,
@@ -137,6 +148,92 @@ const getOrders = async (req, res) => {
     }
 };
 
+// Get a single order by ID
+const getOrderById = async (req, res) => {
+    try {
+        const order = await Order.findById(req.params.id)
+            .populate("customer", "name email")
+            .populate("deliveryBoy", "name email");
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: "Order not found"
+            });
+        }
+
+        // Authorization: customers can only see their own orders
+        if (req.user.role === "customer" && order.customer._id.toString() !== req.user._id.toString()) {
+            return res.status(403).json({
+                success: false,
+                message: "Not authorized to view this order"
+            });
+        }
+
+        // Delivery agents can only see their assigned orders
+        if (req.user.role === "delivery" && order.deliveryBoy && order.deliveryBoy._id.toString() !== req.user._id.toString()) {
+            return res.status(403).json({
+                success: false,
+                message: "This order is not assigned to you"
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            order
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// Update rider GPS location for an active order
+const updateOrderLocation = async (req, res) => {
+    try {
+        const { lat, lng } = req.body;
+        const order = await Order.findById(req.params.id);
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: "Order not found"
+            });
+        }
+
+        if (order.deliveryBoy && order.deliveryBoy.toString() !== req.user._id.toString()) {
+            return res.status(403).json({
+                success: false,
+                message: "This order is not assigned to you"
+            });
+        }
+
+        // Emit location to the order's Socket.IO room
+        const io = req.app.get("io");
+        if (io) {
+            io.to(`order_${order._id}`).emit("location_updated", {
+                orderId: order._id,
+                lat,
+                lng,
+                riderId: req.user._id,
+                timestamp: Date.now()
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Location broadcast sent"
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
 // Assign or Reassign Delivery Rider by Admin/Owner
 const assignRiderByAdmin = async (req, res) => {
     try {
@@ -150,7 +247,6 @@ const assignRiderByAdmin = async (req, res) => {
             });
         }
 
-        // Check if rider exists and has role "delivery"
         if (deliveryBoyId) {
             const User = require("../models/User");
             const rider = await User.findById(deliveryBoyId);
@@ -171,6 +267,16 @@ const assignRiderByAdmin = async (req, res) => {
             .populate("customer", "name email")
             .populate("deliveryBoy", "name email");
 
+        // Notify via socket
+        const io = req.app.get("io");
+        if (io) {
+            io.to(`order_${order._id}`).emit("status_updated", {
+                orderId: order._id,
+                status: order.status,
+                timestamp: Date.now()
+            });
+        }
+
         res.status(200).json({
             success: true,
             message: "Rider assignment updated successfully",
@@ -184,7 +290,7 @@ const assignRiderByAdmin = async (req, res) => {
     }
 };
 
-// Update Order Status (Owner or Delivery)
+// Update Order Status (Owner/Admin or Delivery)
 const updateOrderStatus = async (req, res) => {
     try {
         const { status } = req.body;
@@ -197,18 +303,17 @@ const updateOrderStatus = async (req, res) => {
             });
         }
 
-        // Authorization checks for transitions
         if (req.user.role === "owner" || req.user.role === "admin") {
-            // Owner/Admin can perform any status transition: accepted, prepared, dispatched, delivered
-            if (status !== "accepted" && status !== "prepared" && status !== "dispatched" && status !== "delivered") {
+            const allowedStatuses = ["placed", "accepted", "prepared", "dispatched", "delivered", "cancelled"];
+            if (!allowedStatuses.includes(status)) {
                 return res.status(400).json({
                     success: false,
-                    message: "Owner can only transition status to 'accepted', 'prepared', 'dispatched' or 'delivered'"
+                    message: "Invalid status transition"
                 });
             }
         } else if (req.user.role === "delivery") {
-            // Delivery Boy can mark as dispatched or delivered (retained for fallback)
-            if (status !== "dispatched" && status !== "delivered") {
+            const allowedDeliveryStatuses = ["dispatched", "delivered"];
+            if (!allowedDeliveryStatuses.includes(status)) {
                 return res.status(400).json({
                     success: false,
                     message: "Rider can only transition status to 'dispatched' or 'delivered'"
@@ -232,6 +337,22 @@ const updateOrderStatus = async (req, res) => {
             order.deliveryProof = req.body.deliveryProof;
         }
         await order.save();
+
+        // Emit status change to all watchers in order room
+        const io = req.app.get("io");
+        if (io) {
+            io.to(`order_${order._id}`).emit("status_updated", {
+                orderId: order._id,
+                status,
+                timestamp: Date.now()
+            });
+            // Also emit globally so admin dashboards can pick it up
+            io.emit("order_status_changed_global", {
+                orderId: order._id,
+                status,
+                timestamp: Date.now()
+            });
+        }
 
         res.status(200).json({
             success: true,
@@ -273,7 +394,7 @@ const assignDelivery = async (req, res) => {
         }
 
         order.deliveryBoy = req.user._id;
-        order.status = "dispatched"; // Set status to dispatched/out-for-delivery automatically upon assignment
+        order.status = "dispatched";
         await order.save();
 
         const updatedOrder = await Order.findById(order._id)
@@ -295,7 +416,9 @@ const assignDelivery = async (req, res) => {
 module.exports = {
     createOrder,
     getOrders,
+    getOrderById,
     updateOrderStatus,
+    updateOrderLocation,
     assignDelivery,
     assignRiderByAdmin
 };

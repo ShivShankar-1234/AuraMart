@@ -522,18 +522,130 @@ const state = {
     }
 };
 
+// Socket.IO Client
+let socket = null;
+let activeTrackerPollInterval = null;
+let activeTimerInterval = null;
+let riderWatchId = null; // GPS watchId for rider portal
+
+function initSocketClient() {
+    if (typeof io === 'undefined') {
+        console.warn('[Socket] socket.io client not loaded.');
+        return;
+    }
+    if (socket) return;
+    socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
+    socket.on('connect', () => console.log('[Socket] Connected:', socket.id));
+    socket.on('disconnect', () => console.warn('[Socket] Disconnected'));
+    // Global new order toast for admin/owner
+    socket.on('new_order_placed', (data) => {
+        if (state.user && (state.user.role === 'owner' || state.user.role === 'admin')) {
+            showToast(`🛒 New order placed by ${data.customerName || 'Customer'}! ₹${data.totalAmount?.toFixed(2)}`, 'info');
+        }
+    });
+    // Global status change handler
+    socket.on('order_status_changed_global', (data) => {
+        if (state.activeOrder && state.activeOrder._id === data.orderId) {
+            state.activeOrder.status = data.status;
+        }
+    });
+}
+
+// ==========================================
+// Google Maps Platform – Secure SDK Loader
+// ==========================================
+let _googleMapsSDKPromise = null;
+
+function loadGoogleMapsSDK() {
+    // Already loaded
+    if (typeof google !== 'undefined' && typeof google.maps !== 'undefined') {
+        return Promise.resolve();
+    }
+    // Deduplicate concurrent calls
+    if (_googleMapsSDKPromise) return _googleMapsSDKPromise;
+
+    _googleMapsSDKPromise = fetch('/api/config/google-maps-key')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.apiKey) {
+                throw new Error('Google Maps API key not configured. Add GOOGLE_MAPS_API_KEY to Backend/.env');
+            }
+            // Use a random callback name to avoid conflicts
+            return new Promise((resolve, reject) => {
+                const cb = '__gmapsCb_' + Date.now();
+                window[cb] = () => { resolve(); delete window[cb]; };
+                const s = document.createElement('script');
+                s.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=geometry&callback=${cb}`;
+                s.async = true;
+                s.defer = true;
+                s.onerror = () => {
+                    delete window[cb];
+                    reject(new Error('Google Maps JS failed to load – verify API key and enabled APIs'));
+                };
+                document.head.appendChild(s);
+            });
+        });
+
+    // On failure, reset so caller can retry
+    _googleMapsSDKPromise.catch(() => { _googleMapsSDKPromise = null; });
+    return _googleMapsSDKPromise;
+}
+
+/**
+ * Creates a custom SVG circular icon for Google Maps markers.
+ * @param {string} emoji  – The emoji character to display inside the circle
+ * @param {string} color  – Fill color of the circle (hex/css)
+ * @param {number} size   – Diameter in px (default 44)
+ */
+function createGMapsIcon(emoji, color, size = 44) {
+    const half = size / 2;
+    const svg = [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
+        `<circle cx="${half}" cy="${half}" r="${half - 2}" fill="${color}" stroke="white" stroke-width="2.5"/>`,
+        `<text x="${half}" y="${half + Math.round(size * 0.16)}" text-anchor="middle" dominant-baseline="middle" font-size="${Math.round(size * 0.42)}">${emoji}</text>`,
+        `</svg>`
+    ].join('');
+    return {
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+        scaledSize: new google.maps.Size(size, size),
+        anchor: new google.maps.Point(half, half),
+    };
+}
+
+/** Returns Google Maps style array matching the current dark/light theme. */
+function getGoogleMapDarkStyles() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+        || !document.documentElement.hasAttribute('data-theme'); // default is dark
+    if (!isDark) return [];
+    return [
+        { elementType: 'geometry', stylers: [{ color: '#1a1b2e' }] },
+        { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+        { elementType: 'labels.text.fill', stylers: [{ color: '#9191a8' }] },
+        { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1b2e' }] },
+        { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2d2f47' }] },
+        { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#373957' }] },
+        { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#474968' }] },
+        { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1221' }] },
+        { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#1e2035' }] },
+        { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#1e2035' }] },
+    ];
+}
+
 // ==========================================
 // Initialization & Core Event Listeners
 // ==========================================
 document.addEventListener("DOMContentLoaded", () => {
     // 1. Load data from local storage
     state.token = localStorage.getItem("auth_token");
+    initSocketClient();
     const savedUser = localStorage.getItem("auth_user");
     if (savedUser) {
         try {
             state.user = JSON.parse(savedUser);
-            // Enforce role check: User must be customer for main app
-            if (state.user && state.user.role !== "customer") {
+            // Allow customer and delivery roles through the SPA
+            // Owner/admin users are redirected to admin.html instead
+            const allowedRoles = ["customer", "delivery"];
+            if (state.user && !allowedRoles.includes(state.user.role)) {
                 state.user = null;
                 state.token = null;
                 localStorage.removeItem("auth_token");
@@ -678,6 +790,18 @@ async function apiCall(endpoint, method = "GET", body = null, useAuth = false) {
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, config);
         const data = await response.json();
+
+        // Globally catch token expiration
+        if (response.status === 401 && endpoint !== "/api/auth/login") {
+            state.user = null;
+            state.token = null;
+            localStorage.removeItem("auth_user");
+            localStorage.removeItem("auth_token");
+            updateNavbarState();
+            window.location.hash = "#/auth";
+            showToast("Session expired. Please log in again.", "warning");
+        }
+
         return { ok: response.ok, status: response.status, data };
     } catch (error) {
         console.warn(`API call failed for ${endpoint}:`, error);
@@ -757,9 +881,14 @@ async function handleRouting() {
         window.location.hash = "#/";
         return;
     } else if (hash === "#/rider") {
-        window.open("/delivery.html", "_blank");
-        window.location.hash = "#/";
-        return;
+        if (!state.user || state.user.role !== "delivery" || !state.token) {
+            showToast("Please log in as a delivery partner to access the Rider Portal.", "warning");
+            window.location.href = "/login.html";
+            return;
+        }
+        const riderNav = document.getElementById("nav-rider");
+        if (riderNav) riderNav.classList.add("active");
+        matchedView = await renderRider();
     } else if (hash === "#/tracker") {
         if (!state.user || state.user.role !== "customer" || !state.token) {
             window.location.href = "/login.html";
@@ -782,6 +911,22 @@ async function handleRouting() {
             const addrForm = document.getElementById("delivery-address-form-wrapper");
             if (addrForm) addrForm.style.display = "block";
         }, 120);
+    }
+
+    if (hash === "#/tracker") {
+        // initTrackerMap is async - it loads the Google Maps SDK then builds the map.
+        // initTrackerSocket sets up socket listeners (uses trackerGoogleMap when events fire).
+        const mapEl = document.getElementById('delivery-map');
+        if (mapEl) {
+            mapEl.style.cssText = 'height:360px;border-radius:var(--border-radius-lg);overflow:hidden;background:var(--bg-surface-secondary);display:flex;align-items:center;justify-content:center;';
+            mapEl.innerHTML = '<span style="color:var(--text-muted);font-size:0.9rem;"><i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i>Loading map...</span>';
+        }
+        initTrackerSocket();
+        if (window.initTrackerMap) window.initTrackerMap();
+    }
+
+    if (hash === "#/rider") {
+        setTimeout(() => initRiderPortal(), 300);
     }
 
     // Attach listeners unique to individual pages
@@ -1088,19 +1233,19 @@ function renderCheckout() {
                             </div>
 
                             <!-- Detailed Address Form Fields (Unhide on Confirm Location or manual access) -->
-                            <div id="delivery-address-form-wrapper" style="display: none; border-top: 1.5px dashed var(--border-color); padding-top: 20px; transition: all 0.3s ease;">
+                            <div id="delivery-address-form-wrapper" style="display: none; border-top: 1.5px dashed var(--border-color); padding-top: 20px; transition: all 0.3s ease; max-width: 90%; margin: 0 auto;">
                                 <h4 style="margin-bottom: 16px; font-size: 1.05rem; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-address-card" style="color:var(--primary);"></i> Edit Address Details</h4>
-                                <div class="form-row">
+                                <div class="form-row" style="gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);">
                                     <div class="form-group">
                                         <label for="ship-fname">Full Name</label>
-                                        <input type="text" id="ship-fname" placeholder="John Doe">
+                                        <input type="text" id="ship-fname" required placeholder="John Doe" value="${state.user ? state.user.name : ""}">
                                     </div>
                                     <div class="form-group">
                                         <label for="ship-phone">Mobile Number</label>
-                                        <input type="tel" id="ship-phone" placeholder="e.g. 9876543210">
+                                        <input type="tel" id="ship-phone" required placeholder="10-digit number" pattern="[0-9]{10}" maxlength="10" minlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 10);" title="Please enter exactly 10 digits" value="9876543210">
                                     </div>
                                 </div>
-                                <div class="form-row">
+                                <div class="form-row" style="gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);">
                                     <div class="form-group">
                                         <label for="ship-house">House / Flat / Building</label>
                                         <input type="text" id="ship-house" placeholder="e.g. Flat 4B, Silver Heights">
@@ -1110,7 +1255,7 @@ function renderCheckout() {
                                         <input type="text" id="ship-area" placeholder="e.g. Luxury Avenue, Sector 5">
                                     </div>
                                 </div>
-                                <div class="form-row">
+                                <div class="form-row" style="gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);">
                                     <div class="form-group">
                                         <label for="ship-landmark">Landmark (optional)</label>
                                         <input type="text" id="ship-landmark" placeholder="e.g. Opposite Central Park">
@@ -1120,7 +1265,7 @@ function renderCheckout() {
                                         <input type="text" id="ship-city" placeholder="e.g. Mumbai">
                                     </div>
                                 </div>
-                                <div class="form-row">
+                                <div class="form-row" style="gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);">
                                     <div class="form-group">
                                         <label for="ship-state">State</label>
                                         <input type="text" id="ship-state" placeholder="e.g. Maharashtra">
@@ -1164,8 +1309,8 @@ function renderCheckout() {
                                         <span><i class="fa-solid fa-hand-holding-dollar"></i> COD</span>
                                     </label>
                                     <label class="payment-method-option" style="flex: 1; border: 1px solid var(--border-color); padding: 12px; border-radius: var(--border-radius-md); display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; background: var(--bg-surface-secondary);">
-                                        <input type="radio" name="pay-method" value="Google Pay" style="margin: 0;" onchange="togglePaymentInputs('gpay')">
-                                        <span><i class="fa-brands fa-google"></i> Pay</span>
+                                        <input type="radio" name="pay-method" value="UPI" style="margin: 0;" onchange="togglePaymentInputs('gpay')">
+                                        <span><i class="fa-solid fa-qrcode"></i> UPI / GPay</span>
                                     </label>
                                 </div>
                             </div>
@@ -1179,7 +1324,7 @@ function renderCheckout() {
                                         <i class="fa-solid fa-credit-card" style="position: absolute; right: 18px; top: 16px; color: var(--text-muted);"></i>
                                     </div>
                                 </div>
-                                <div class="form-row">
+                                <div class="form-row" style="gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);">
                                     <div class="form-group">
                                         <label for="pay-exp">Expiry Date</label>
                                         <input type="text" id="pay-exp" required placeholder="MM/YY" maxlength="5">
@@ -1198,18 +1343,15 @@ function renderCheckout() {
                                 <p style="font-size: 0.85rem; color: var(--text-secondary); max-width: 320px; line-height: 1.4;">Pay with cash or scan the rider's QR code when the package arrives at your doorstep.</p>
                             </div>
 
-                            <!-- Google Pay field (Real UPI QR Code) -->
-                            <div id="gpay-fields" class="hidden text-center" style="padding: 24px; background: var(--bg-surface-secondary); border-radius: var(--border-radius-md); border: 1px solid var(--border-color); display: flex; flex-direction: column; align-items: center; gap: 12px;">
+                            <!-- Google Pay field (Real UPI Text Only) -->
+                            <div id="gpay-fields" class="hidden text-center" style="padding: 24px; background: var(--bg-surface-secondary); border-radius: var(--border-radius-md); border: 1px solid var(--primary); display: flex; flex-direction: column; align-items: center; gap: 12px;">
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <img src="https://upload.wikimedia.org/wikipedia/commons/f/f2/Google_Pay_Logo.svg" alt="GPay" style="height: 20px;">
                                     <span style="font-weight: 700; font-size: 1.1rem; color: var(--text-primary);">Real UPI Scan & Pay</span>
                                 </div>
-                                <p style="font-size: 0.85rem; color: var(--text-secondary); max-width: 320px; line-height: 1.4;">Scan this dynamic QR Code with your Google Pay or PhonePe mobile app to pay instantly.</p>
-                                <div style="background: white; padding: 12px; border-radius: 12px; box-shadow: var(--shadow-sm); display: inline-block;">
-                                    <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&color=0f172a&data=upi://pay?pa=auramart@okaxis%26pn=AuraMart%26am=${total.toFixed(2)}%26cu=INR%26tn=AuraMart%2520Order" style="display: block; width: 180px; height: 180px;">
-                                </div>
-                                <div style="font-family: monospace; font-size: 0.8rem; background: var(--bg-surface-tertiary); padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border-color); color: var(--text-secondary);">
-                                    VPA: auramart@okaxis | Amount: ₹${total.toFixed(2)}
+                                <p style="font-size: 0.85rem; color: var(--text-secondary); max-width: 350px; line-height: 1.4; margin: 0;">Use the UPI string below to complete your payment.</p>
+                                <div style="font-family: monospace; font-size: 1rem; background: var(--bg-surface-tertiary); padding: 12px 24px; border-radius: 8px; border: 1px solid var(--border-color); color: var(--primary); letter-spacing: 0.5px;">
+                                    VPA: <b>auramart@okaxis</b><br>Amount: <b>₹${total.toFixed(2)}</b>
                                 </div>
                                 <p style="font-size: 0.8rem; color: var(--warning); font-weight: 600; display: flex; align-items: center; gap: 6px; margin: 0;">
                                     <i class="fa-solid fa-circle-info"></i> After paying on your phone, click "Confirm Payment" to place the order!
@@ -1348,10 +1490,11 @@ async function renderTracker() {
     } else {
         setTimeout(startActiveOrderTimer, 600);
 
-        const states = ["placed", "accepted", "prepared", "dispatched", "delivered"];
+        const states = ["pending_approval", "placed", "accepted", "prepared", "dispatched", "delivered"];
         const activeIndex = states.indexOf(activeOrder.status);
 
         const steps = [
+            { key: "pending_approval", title: "Pending", desc: "Awaiting approval", icon: "fa-solid fa-hourglass-half" },
             { key: "placed", title: "Placed", desc: "Received", icon: "fa-solid fa-receipt" },
             { key: "accepted", title: "Accepted", desc: "Preparing", icon: "fa-solid fa-circle-check" },
             { key: "prepared", title: "Packed", desc: "Rider ready", icon: "fa-solid fa-box-open" },
@@ -1548,7 +1691,7 @@ function renderProductCardsGrid(productsList) {
                 </button>
             `;
         } else if (quantityInCart > 0) {
-            // Zepto style: show - quantity + pill control
+            // Quick-add style: show - quantity + pill control
             cartActionHTML = `
                 <div class="card-qty-selector">
                     <button class="card-qty-btn decrease" onclick="event.stopPropagation(); adjustCartItemQty('${p._id}', -1)" title="Decrease">-</button>
@@ -2343,6 +2486,13 @@ window.handlePlaceOrder = function (e) {
             };
 
             if (!state.isOffline) {
+                // Show loading state on button
+                const btn = document.getElementById("confirm-payment-btn");
+                if (btn) {
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
+                }
+
                 apiCall("/api/orders/create", "POST", {
                     items: formattedItems,
                     subtotal: subtotal,
@@ -2355,6 +2505,7 @@ window.handlePlaceOrder = function (e) {
                     storeLatLng: storeLatLng,
                     paymentMethod: paymentMethod,
                     paymentStatus: paymentStatus,
+                    upiId: paymentMethod === "UPI" ? "auramart@okaxis" : "",
                     customerPhone: customerPhone,
                     deliveryInstructions: deliveryInstructions,
                     deliveryAddress: deliveryAddress
@@ -2362,10 +2513,21 @@ window.handlePlaceOrder = function (e) {
                     if (res.ok && res.data && res.data.order) {
                         state.orders.push(res.data.order);
                         state.activeOrder = res.data.order;
-                        // Save to localStorage so tracker works after page reload
                         localStorage.setItem("orders", JSON.stringify(state.orders));
                         updateNavbarState();
+                        document.getElementById("app-content").innerHTML = invoiceHTML;
+                        clearCart();
+                        showToast("Transaction finalized. Order dispatched!", "success");
+                    } else {
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.innerHTML = `Confirm & Place Order (₹${total.toFixed(2)})`;
+                        }
+                        showToast(res.data?.message || "Failed to place order. Try again.", "error");
                     }
+                }).catch(err => {
+                    if (btn) btn.disabled = false;
+                    showToast("Network error. Please try again.", "error");
                 });
             } else {
                 const hexSuffix = Math.floor(100000 + Math.random() * 900000);
@@ -2374,7 +2536,7 @@ window.handlePlaceOrder = function (e) {
                     customer: state.user ? state.user._id : "60c72b2f9b1d8a23c4001101",
                     items: formattedItems,
                     totalAmount: total,
-                    status: "placed",
+                    status: "pending_approval",
                     deliveryBoy: null,
                     shippingAddress: shippingAddress,
                     estimatedTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
@@ -2391,11 +2553,11 @@ window.handlePlaceOrder = function (e) {
                 localStorage.setItem("orders", JSON.stringify(state.orders));
                 state.activeOrder = mockOrder;
                 updateNavbarState();
-            }
 
-            document.getElementById("app-content").innerHTML = invoiceHTML;
-            clearCart();
-            showToast("Transaction finalized. Order dispatched!", "success");
+                document.getElementById("app-content").innerHTML = invoiceHTML;
+                clearCart();
+                showToast("Offline mode. Mock order created!", "success");
+            }
         }
     }, 1000);
 };
@@ -2641,10 +2803,8 @@ window.assignRiderHandler = async function (orderId) {
 };
 
 // ==========================================
-// Zepto-Style 10-Minute Countdown Timer & Map Tracking
+// 10-Minute Countdown Timer & Map Tracking
 // ==========================================
-let activeTimerInterval = null;
-let activeTrackerPollInterval = null;
 let trackingGoogleMap = null;
 let trackingStoreMarker = null;
 let trackingHomeMarker = null;
@@ -2968,6 +3128,12 @@ function ensureGoogleMapsLoaded() {
         return googleMapsLoadingPromise;
     }
     googleMapsLoadingPromise = new Promise(async (resolve, reject) => {
+        // Timeout after 6 seconds so the page never hangs when Maps key is invalid or network is slow
+        const timeout = setTimeout(() => {
+            googleMapsLoadingPromise = null;
+            reject(new Error("Google Maps load timed out – falling back to OSM"));
+        }, 6000);
+
         try {
             const res = await fetch("/api/config/google-maps-key");
             const data = await res.json();
@@ -2978,14 +3144,17 @@ function ensureGoogleMapsLoaded() {
             script.async = true;
             script.defer = true;
             script.onload = () => {
+                clearTimeout(timeout);
                 resolve();
             };
             script.onerror = (e) => {
+                clearTimeout(timeout);
                 googleMapsLoadingPromise = null;
                 reject(new Error("Failed to load Google Maps script"));
             };
             document.head.appendChild(script);
         } catch (err) {
+            clearTimeout(timeout);
             googleMapsLoadingPromise = null;
             reject(err);
         }
@@ -3042,12 +3211,11 @@ window.initCheckoutMap = async function () {
             checkoutGoogleMap.panTo(pos);
         });
 
-        // Auto-detect and select location on checkout page load (Zepto-style)
-        if (!state.customerGeoLocation) {
-            setTimeout(() => {
-                window.useCurrentLocation();
-            }, 100);
-        }
+        // Always request a fresh GPS fix when the checkout map mounts
+        // (avoids stale cached coords and the race-condition on first visit)
+        setTimeout(() => {
+            window.useCurrentLocation();
+        }, 100);
 
     } catch (err) {
         console.error("Failed to initialize Google Maps on checkout:", err);
@@ -3057,6 +3225,7 @@ window.initCheckoutMap = async function () {
         mapDiv.innerHTML = `
             <div style="position:relative; height:100%; width:100%;">
                 <iframe
+                    id="osm-checkout-iframe"
                     width="100%" height="100%"
                     frameborder="0" scrolling="no" marginheight="0" marginwidth="0"
                     src="https://www.openstreetmap.org/export/embed.html?bbox=${(startLng - 0.01)},${(startLat - 0.008)},${(startLng + 0.01)},${(startLat + 0.008)}&layer=mapnik&marker=${lat},${lng}"
@@ -3074,10 +3243,8 @@ window.initCheckoutMap = async function () {
         if (lngInput) lngInput.value = startLng.toFixed(6);
         const deliveryForm = document.getElementById("delivery-address-form-wrapper");
         if (deliveryForm) deliveryForm.style.display = "block";
-        // Still trigger auto geolocation to populate address fields
-        if (!state.customerGeoLocation) {
-            setTimeout(() => { window.useCurrentLocation && window.useCurrentLocation(); }, 150);
-        }
+        // Always request fresh GPS (also updates the OSM iframe via useCurrentLocation)
+        setTimeout(() => { window.useCurrentLocation && window.useCurrentLocation(); }, 150);
     }
 };
 
@@ -3172,10 +3339,20 @@ window.useCurrentLocation = function (event) {
             state.customerGeoLocation = { lat, lng };
 
             if (checkoutGoogleMap && checkoutGoogleMarker) {
+                // Update Google Maps marker
                 const newPos = new google.maps.LatLng(lat, lng);
                 checkoutGoogleMarker.setPosition(newPos);
                 checkoutGoogleMap.setCenter(newPos);
                 checkoutGoogleMap.setZoom(16);
+                geocodeLatLng(lat, lng);
+                showToast("Current location detected!", "success");
+            } else {
+                // Google Maps not loaded — update OSM fallback iframe
+                const osmIframe = document.getElementById('osm-checkout-iframe');
+                if (osmIframe) {
+                    osmIframe.src = `https://www.openstreetmap.org/export/embed.html?bbox=${(lng - 0.01)},${(lat - 0.008)},${(lng + 0.01)},${(lat + 0.008)}&layer=mapnik&marker=${lat.toFixed(5)},${lng.toFixed(5)}`;
+                }
+                // Populate coordinates & reverse-geocode address regardless
                 geocodeLatLng(lat, lng);
                 showToast("Current location detected!", "success");
             }
@@ -3308,4 +3485,693 @@ window.confirmSelectedLocation = function (event) {
     }
 
     showToast("Location confirmed! Form populated below.", "success");
+};
+
+// ==========================================
+// Tracker Map Initialization (Google Maps Platform)
+// ==========================================
+let trackerGoogleMap = null;
+let trackerRiderGMMarker = null;
+let trackerDirectionsRenderer = null;
+let trackerDirectionsService = null;
+
+window.initTrackerMap = async function () {
+    const mapDiv = document.getElementById('delivery-map');
+    if (!mapDiv) return;
+
+    // Load Google Maps SDK (fetches key from backend securely)
+    try {
+        await loadGoogleMapsSDK();
+    } catch (err) {
+        mapDiv.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;gap:12px;color:var(--text-muted);">
+            <i class="fa-solid fa-map-location-dot" style="font-size:2.5rem;"></i>
+            <p style="text-align:center;font-size:0.9rem;max-width:280px;">Map unavailable<br><small>${err.message}</small></p>
+        </div>`;
+        console.error('[Maps] loadGoogleMapsSDK failed:', err);
+        return;
+    }
+
+    // Destroy existing map if re-navigating
+    if (trackerGoogleMap) {
+        trackerGoogleMap = null;
+        trackerRiderGMMarker = null;
+        trackerDirectionsRenderer = null;
+        trackerDirectionsService = null;
+    }
+
+    const order = state.activeOrder;
+    let custLat = 12.9716, custLng = 77.5946;   // Default: Bangalore
+    let storeLat = 12.9800, storeLng = 77.5870;  // Offset store slightly
+
+    if (order) {
+        if (order.deliveryAddress?.latitude) {
+            custLat = parseFloat(order.deliveryAddress.latitude) || custLat;
+            custLng = parseFloat(order.deliveryAddress.longitude) || custLng;
+        } else if (Array.isArray(order.customerLatLng) && order.customerLatLng.length === 2) {
+            custLat = parseFloat(order.customerLatLng[0]) || custLat;
+            custLng = parseFloat(order.customerLatLng[1]) || custLng;
+        }
+        storeLat = custLat + 0.008;
+        storeLng = custLng - 0.008;
+        if (Array.isArray(order.storeLatLng) && order.storeLatLng.length === 2) {
+            storeLat = parseFloat(order.storeLatLng[0]) || storeLat;
+            storeLng = parseFloat(order.storeLatLng[1]) || storeLng;
+        }
+    }
+
+    // Prepare map container
+    mapDiv.innerHTML = '';
+    mapDiv.style.cssText = 'height:360px;border-radius:var(--border-radius-lg);overflow:hidden;';
+
+    trackerGoogleMap = new google.maps.Map(mapDiv, {
+        center: { lat: (custLat + storeLat) / 2, lng: (custLng + storeLng) / 2 },
+        zoom: 13,
+        mapTypeId: 'roadmap',
+        styles: getGoogleMapDarkStyles(),
+        zoomControl: true,
+        streetViewControl: false,
+        mapTypeControl: false,
+        fullscreenControl: true,
+    });
+
+    // ── Customer Destination Marker ──────────────────────────────────────
+    const custMarker = new google.maps.Marker({
+        position: { lat: custLat, lng: custLng },
+        map: trackerGoogleMap,
+        title: 'Your Delivery Address',
+        icon: createGMapsIcon('🏠', '#6366f1'),
+        zIndex: 10,
+    });
+    new google.maps.InfoWindow({ content: '<b>Your Delivery Location</b>' })
+        .open(trackerGoogleMap, custMarker);
+
+    // ── Store / Origin Marker ─────────────────────────────────────────────
+    const storeMarker = new google.maps.Marker({
+        position: { lat: storeLat, lng: storeLng },
+        map: trackerGoogleMap,
+        title: 'AuraMart Store',
+        icon: createGMapsIcon('🏪', '#06b6d4'),
+        zIndex: 10,
+    });
+    new google.maps.InfoWindow({ content: '<b>AuraMart Store</b>' })
+        .open(trackerGoogleMap, storeMarker);
+
+    // ── Fit initial viewport to both markers ─────────────────────────────
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend({ lat: custLat, lng: custLng });
+    bounds.extend({ lat: storeLat, lng: storeLng });
+    trackerGoogleMap.fitBounds(bounds, 60);
+
+    // ── Directions route (store → customer) ──────────────────────────────
+    trackerDirectionsService = new google.maps.DirectionsService();
+    trackerDirectionsRenderer = new google.maps.DirectionsRenderer({
+        map: trackerGoogleMap,
+        suppressMarkers: true,           // keep our custom markers
+        polylineOptions: {
+            strokeColor: '#6366f1',
+            strokeWeight: 4,
+            strokeOpacity: 0.85,
+        },
+    });
+
+    trackerDirectionsService.route({
+        origin: new google.maps.LatLng(storeLat, storeLng),
+        destination: new google.maps.LatLng(custLat, custLng),
+        travelMode: google.maps.TravelMode.DRIVING,
+    }, (result, status) => {
+        if (status === 'OK') {
+            trackerDirectionsRenderer.setDirections(result);
+            const leg = result.routes[0]?.legs[0];
+            if (leg) {
+                const distEl = document.getElementById('route-distance');
+                const duraEl = document.getElementById('route-duration');
+                if (distEl) distEl.textContent = leg.distance.text;
+                if (duraEl) duraEl.textContent = leg.duration.text;
+            }
+        } else {
+            // Fallback: draw a straight dashed polyline
+            console.warn('[Maps] DirectionsService status:', status, '– rendering fallback line');
+            new google.maps.Polyline({
+                path: [
+                    { lat: storeLat, lng: storeLng },
+                    { lat: custLat, lng: custLng },
+                ],
+                geodesic: true,
+                strokeColor: '#6366f1',
+                strokeOpacity: 0.7,
+                strokeWeight: 3,
+                map: trackerGoogleMap,
+            });
+        }
+    });
+};
+
+// ==========================================
+// Countdown Timer for the Active Order Tracker
+// ===========================================
+
+function startActiveOrderTimer() {
+    const clockEl = document.getElementById('countdown-clock');
+    const subtextEl = document.getElementById('countdown-subtext');
+    if (!clockEl) return;
+    const order = state.activeOrder;
+    if (!order) return;
+    if (activeTimerInterval) clearInterval(activeTimerInterval);
+
+    const estimatedMs = order.estimatedDeliveryTime
+        ? new Date(order.estimatedDeliveryTime).getTime()
+        : Date.now() + 10 * 60 * 1000;
+
+    const statusMessages = {
+        pending_approval: 'Awaiting store approval...',
+        placed: 'Order confirmed! Preparing now.',
+        accepted: 'Kitchen is packing your order.',
+        prepared: 'Packed and ready -- dispatching rider.',
+        dispatched: 'Rider is on the way to you!',
+        delivered: 'Delivered! Enjoy your items.'
+    };
+
+    function tick() {
+        const remaining = estimatedMs - Date.now();
+        if (remaining <= 0 || order.status === 'delivered') {
+            clearInterval(activeTimerInterval);
+            if (clockEl) clockEl.textContent = '00:00';
+            if (subtextEl) subtextEl.textContent = statusMessages.delivered;
+            return;
+        }
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        if (clockEl) clockEl.textContent = String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+        if (subtextEl) subtextEl.textContent = statusMessages[order.status] || 'Tracking your order...';
+    }
+    tick();
+    activeTimerInterval = setInterval(tick, 1000);
+}
+
+// ==========================================
+// Role-based Nav Link Visibility
+// ==========================================
+function updateNavbarRoleLinks() {
+    const role = state.user?.role;
+    const trackerLinks = document.querySelectorAll('.customer-only');
+    const riderLink = document.getElementById('nav-rider');
+    const ownerLink = document.getElementById('nav-owner');
+
+    trackerLinks.forEach(el => {
+        el.classList.toggle('hidden', role !== 'customer');
+    });
+
+    if (riderLink) riderLink.classList.toggle('hidden', role !== 'delivery');
+    if (ownerLink) ownerLink.classList.toggle('hidden', role !== 'owner' && role !== 'admin');
+}
+
+// ==========================================
+// View: TRACKER (Customer live order tracker)
+// ==========================================
+async function renderTracker() {
+    const res = await apiCall('/api/orders', 'GET', null, true);
+    let latestOrder = null;
+    if (res.ok && res.data?.orders?.length > 0) {
+        latestOrder = res.data.orders[0];
+        state.activeOrder = latestOrder;
+    }
+
+    if (!latestOrder) {
+        return `
+        <div class="container" style="padding: 80px 0; text-align:center;">
+            <i class="fa-solid fa-box-open" style="font-size:4rem;color:var(--text-muted);margin-bottom:24px;"></i>
+            <h2 style="margin-bottom:12px;">No Active Orders</h2>
+            <p style="color:var(--text-secondary);margin-bottom:32px;">You don't have any orders to track right now.</p>
+            <a href="#/shop" class="btn btn-primary">Shop Now <i class="fa-solid fa-arrow-right"></i></a>
+        </div>`;
+    }
+
+    const s = latestOrder.status || 'placed';
+    const steps = ['placed', 'accepted', 'prepared', 'dispatched', 'delivered'];
+    const stepLabels = { placed: 'Order Placed', accepted: 'Accepted by Store', prepared: 'Ready for Pickup', dispatched: 'On the Way', delivered: 'Delivered!' };
+    const stepIcons = { placed: 'fa-check', accepted: 'fa-store', prepared: 'fa-box-check', dispatched: 'fa-motorcycle', delivered: 'fa-house-circle-check' };
+    const currentIdx = steps.indexOf(s);
+
+    const pipelineHTML = steps.map((step, i) => {
+        let cls = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'pending';
+        return `
+            <div class="pipeline-step ${cls}">
+                <div class="pipeline-node ${cls}">
+                    <i class="fa-solid ${stepIcons[step] || 'fa-circle'}"></i>
+                </div>
+                <div class="pipeline-info">
+                    <div class="pipeline-label">${stepLabels[step]}</div>
+                    <div class="pipeline-sublabel">${cls === 'done' ? 'Completed' : cls === 'active' ? 'In Progress' : 'Pending'}</div>
+                </div>
+            </div>`;
+    }).join('');
+
+    const riderName = latestOrder.deliveryBoy?.name || 'Awaiting assignment';
+
+    return `
+    <section class="rider-section">
+        <div class="container">
+            <h2 style="font-size:2rem;margin-bottom:8px;"><i class="fa-solid fa-bolt" style="color:var(--primary);"></i> Live Order Tracker</h2>
+            <p style="color:var(--text-secondary);margin-bottom:32px;">Order #${latestOrder._id.slice(-8).toUpperCase()} &mdash; Real-time tracking via Socket.IO</p>
+
+            <div class="tracker-layout">
+                <!-- Map container -->
+                <div>
+                    <div id="delivery-map"></div>
+                    <div style="margin-top:12px;padding:16px;background:var(--bg-surface);border:1px solid var(--border-color);border-radius:var(--border-radius-md);">
+                        <div style="display:flex;align-items:center;gap:10px;font-size:0.9rem;color:var(--text-secondary);">
+                            <span class="rider-status-indicator"></span>
+                            <span><strong>Rider:</strong> ${riderName}</span>
+                            <span style="margin-left:auto;">
+                                <span id="socket-status-badge" style="font-size:0.75rem;background:var(--bg-surface-secondary);padding:4px 10px;border-radius:var(--border-radius-full);border:1px solid var(--border-color);">
+                                    <i class="fa-solid fa-circle" style="color:var(--warning);font-size:0.5rem;"></i> Connecting...
+                                </span>
+                            </span>
+                        </div>
+                        <div style="display:flex;gap:20px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-color);font-size:0.85rem;">
+                            <span><i class="fa-solid fa-road" style="color:var(--primary);margin-right:6px;"></i><span id="route-distance">Calculating route...</span></span>
+                            <span><i class="fa-solid fa-clock" style="color:var(--warning);margin-right:6px;"></i><span id="route-duration">—</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pipeline + ETA -->
+                <div>
+                    <div class="eta-badge" id="eta-badge">
+                        <i class="fa-solid fa-clock"></i>
+                        <span id="countdown-clock">--:--</span>
+                        <span style="font-size:0.8rem;font-weight:600;">ETA</span>
+                    </div>
+                    <p id="countdown-subtext" style="text-align:center;color:var(--text-muted);font-size:0.85rem;margin-bottom:20px;">Loading status...</p>
+
+                    <div style="background:var(--bg-surface);border:1px solid var(--border-color);border-radius:var(--border-radius-lg);padding:24px;">
+                        <h4 style="margin-bottom:16px;">Order Progress</h4>
+                        <div class="order-pipeline" id="order-pipeline">
+                            ${pipelineHTML}
+                        </div>
+                    </div>
+
+                    <div style="margin-top:16px;background:var(--bg-surface);border:1px solid var(--border-color);border-radius:var(--border-radius-md);padding:16px;">
+                        <div style="display:flex;justify-content:space-between;font-size:0.9rem;margin-bottom:8px;">
+                            <span style="color:var(--text-muted);">Order Total</span>
+                            <strong>₹${latestOrder.totalAmount?.toFixed(2) || '0.00'}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:0.9rem;">
+                            <span style="color:var(--text-muted);">Payment</span>
+                            <strong>${latestOrder.paymentMethod || 'Online'} — ${latestOrder.paymentStatus || 'Paid'}</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>`;
+}
+
+// Socket.IO subscription for live location on tracker page (Google Maps)
+function initTrackerSocket() {
+    if (!socket) return;
+    const order = state.activeOrder;
+    if (!order) return;
+
+    socket.emit('join_order_room', order._id);
+
+    const badge = document.getElementById('socket-status-badge');
+    if (badge) badge.innerHTML = `<i class="fa-solid fa-circle" style="color:var(--success);font-size:0.5rem;"></i> Live`;
+
+    startActiveOrderTimer();
+
+    // Rider offline detection – if no location update for 30s, show offline badge
+    let _riderLastSeen = Date.now();
+    const _offlineTimer = setInterval(() => {
+        if ((Date.now() - _riderLastSeen) > 30000 && state.activeOrder?.status === 'dispatched') {
+            const b = document.getElementById('socket-status-badge');
+            if (b) b.innerHTML = `<i class="fa-solid fa-circle" style="color:var(--warning);font-size:0.5rem;"></i> Rider offline`;
+        }
+    }, 10000);
+    window._trackerOfflineTimer = _offlineTimer; // allow cleanup on navigation
+
+    socket.on('location_updated', (data) => {
+        if (data.orderId !== order._id.toString()) return;
+
+        _riderLastSeen = Date.now();
+        const b = document.getElementById('socket-status-badge');
+        if (b) b.innerHTML = `<i class="fa-solid fa-circle" style="color:var(--success);font-size:0.5rem;"></i> Live`;
+
+        if (!trackerGoogleMap) return; // map not ready yet – skip
+
+        const pos = new google.maps.LatLng(data.lat, data.lng);
+
+        // Create or move rider marker
+        if (!trackerRiderGMMarker) {
+            trackerRiderGMMarker = new google.maps.Marker({
+                position: pos,
+                map: trackerGoogleMap,
+                title: 'Your Rider',
+                icon: createGMapsIcon('🛵', '#f59e0b', 48),
+                zIndex: 20,
+                animation: google.maps.Animation.DROP,
+            });
+            new google.maps.InfoWindow({ content: '<b>Your Rider is here!</b>' })
+                .open(trackerGoogleMap, trackerRiderGMMarker);
+        } else {
+            trackerRiderGMMarker.setPosition(pos);
+        }
+
+        // Re-draw the route from rider's current location to customer
+        const custLat = order.deliveryAddress?.latitude
+            ? parseFloat(order.deliveryAddress.latitude) : null;
+        const custLng = order.deliveryAddress?.longitude
+            ? parseFloat(order.deliveryAddress.longitude) : null;
+
+        if (custLat && custLng && trackerDirectionsRenderer && trackerDirectionsService) {
+            trackerDirectionsService.route({
+                origin: pos,
+                destination: new google.maps.LatLng(custLat, custLng),
+                travelMode: google.maps.TravelMode.DRIVING,
+            }, (result, status) => {
+                if (status === 'OK') {
+                    trackerDirectionsRenderer.setDirections(result);
+                    const leg = result.routes[0]?.legs[0];
+                    if (leg) {
+                        const distEl = document.getElementById('route-distance');
+                        const duraEl = document.getElementById('route-duration');
+                        if (distEl) distEl.textContent = leg.distance.text;
+                        if (duraEl) duraEl.textContent = leg.duration.text;
+                    }
+                }
+            });
+        }
+
+        // Pan map smoothly to rider position
+        trackerGoogleMap.panTo(pos);
+    });
+
+    socket.on('status_updated', (data) => {
+        if (data.orderId !== order._id.toString()) return;
+        state.activeOrder.status = data.status;
+        const steps = ['placed', 'accepted', 'prepared', 'dispatched', 'delivered'];
+        const stepLabels = { placed: 'Order Placed', accepted: 'Accepted by Store', prepared: 'Ready for Pickup', dispatched: 'On the Way', delivered: 'Delivered!' };
+        const stepIcons = { placed: 'fa-check', accepted: 'fa-store', prepared: 'fa-box-check', dispatched: 'fa-motorcycle', delivered: 'fa-house-circle-check' };
+        const currentIdx = steps.indexOf(data.status);
+
+        const pipeline = document.getElementById('order-pipeline');
+        if (pipeline) {
+            pipeline.innerHTML = steps.map((step, i) => {
+                let cls = i < currentIdx ? 'done' : i === currentIdx ? 'active' : 'pending';
+                return `
+                    <div class="pipeline-step ${cls}">
+                        <div class="pipeline-node ${cls}"><i class="fa-solid ${stepIcons[step] || 'fa-circle'}"></i></div>
+                        <div class="pipeline-info">
+                            <div class="pipeline-label">${stepLabels[step]}</div>
+                            <div class="pipeline-sublabel">${cls === 'done' ? 'Completed' : cls === 'active' ? 'In Progress' : 'Pending'}</div>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        if (data.status === 'delivered') {
+            clearInterval(_offlineTimer);
+            // Remove rider marker when delivered
+            if (trackerRiderGMMarker) {
+                trackerRiderGMMarker.setMap(null);
+                trackerRiderGMMarker = null;
+            }
+            showToast('🎉 Your order has been delivered! Enjoy!', 'success');
+        }
+    });
+}
+
+// ==========================================
+// View: RIDER PORTAL (Embedded delivery partner dashboard)
+// ==========================================
+async function renderRider() {
+    const res = await apiCall('/api/orders', 'GET', null, true);
+    let assignedOrders = [];
+    if (res.ok && res.data?.orders) {
+        assignedOrders = res.data.orders.filter(o => o.status !== 'delivered');
+    }
+
+    const orderCardsHTML = assignedOrders.length === 0 ? `
+        <div style="text-align:center;padding:60px 24px;color:var(--text-muted);">
+            <i class="fa-solid fa-motorcycle" style="font-size:3.5rem;margin-bottom:20px;"></i>
+            <h3 style="margin-bottom:8px;">No Active Deliveries</h3>
+            <p>You have no assigned orders right now. Check back soon!</p>
+        </div>` :
+        assignedOrders.map(order => {
+            const addr = order.deliveryAddress;
+            const displayAddr = addr ? `${addr.house || ''} ${addr.area || ''}, ${addr.city || ''}`.trim() : order.shippingAddress || 'Address not available';
+            return `
+        <div class="rider-order-card" id="rider-card-${order._id}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+                <div>
+                    <h4 style="font-size:1rem;margin-bottom:4px;">Order #${order._id.slice(-8).toUpperCase()}</h4>
+                    <span style="font-size:0.8rem;color:var(--text-muted);">${new Date(order.createdAt).toLocaleString('en-IN')}</span>
+                </div>
+                <span style="background:var(--primary-light);color:var(--primary);padding:4px 12px;border-radius:var(--border-radius-full);font-size:0.8rem;font-weight:700;">${order.status.toUpperCase()}</span>
+            </div>
+
+            <div style="background:var(--bg-surface-secondary);border-radius:var(--border-radius-md);padding:14px;margin-bottom:14px;font-size:0.9rem;">
+                <div style="display:flex;gap:8px;margin-bottom:8px;">
+                    <i class="fa-solid fa-location-dot" style="color:var(--danger);margin-top:2px;"></i>
+                    <span><strong>Deliver to:</strong> ${displayAddr}</span>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <i class="fa-solid fa-phone" style="color:var(--success);margin-top:2px;"></i>
+                    <span><strong>Contact:</strong> ${addr?.mobile || order.customerPhone || 'N/A'}</span>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                ${order.status === 'prepared' ? `<button class="btn btn-primary btn-sm" onclick="window.riderAcceptOrder('${order._id}')"><i class="fa-solid fa-motorcycle"></i> Accept & Dispatch</button>` : ''}
+                ${order.status === 'dispatched' ? `
+                    <button class="btn btn-success btn-sm" onclick="window.riderMarkDelivered('${order._id}')"><i class="fa-solid fa-check"></i> Mark Delivered</button>
+                    <button class="btn btn-secondary btn-sm" onclick="window.riderStartTracking('${order._id}', ${addr?.latitude || 12.97}, ${addr?.longitude || 77.61})"><i class="fa-solid fa-map-pin"></i> Start GPS Sharing</button>
+                ` : ''}
+            </div>
+
+            <div id="rider-map-${order._id}" class="rider-map-container hidden"></div>
+        </div>`;
+        }).join('');
+
+    return `
+    <section class="rider-section">
+        <div class="container">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:16px;">
+                <div>
+                    <h2 style="font-size:2rem;margin-bottom:4px;"><i class="fa-solid fa-motorcycle" style="color:var(--primary);"></i> Rider Portal</h2>
+                    <p style="color:var(--text-secondary);">Welcome back, <strong>${state.user?.name || 'Rider'}</strong></p>
+                </div>
+                <div class="rider-status-bar" style="width:auto;">
+                    <span class="rider-status-indicator"></span>
+                    <span style="font-weight:600;font-size:0.9rem;">Active & Ready</span>
+                    <span style="color:var(--text-muted);font-size:0.85rem;">${assignedOrders.length} active order${assignedOrders.length !== 1 ? 's' : ''}</span>
+                </div>
+            </div>
+
+            <div id="rider-orders-list">
+                ${orderCardsHTML}
+            </div>
+        </div>
+    </section>`;
+}
+
+// Rider portal: GPS tracking and order status management
+function initRiderPortal() {
+    if (!socket || !state.user) return;
+    socket.emit('join_rider_room', state.user._id);
+}
+
+window.riderAcceptOrder = async function (orderId) {
+    const res = await apiCall(`/api/orders/${orderId}/status`, 'PUT', { status: 'dispatched' }, true);
+    if (res.ok) {
+        showToast('Order accepted! You are now dispatching.', 'success');
+        const card = document.getElementById(`rider-card-${orderId}`);
+        if (card) {
+            const badge = card.querySelector('span[style*="background:var(--primary-light)"]');
+            if (badge) badge.textContent = 'DISPATCHED';
+            const btns = card.querySelector('div:last-child');
+            if (btns) btns.innerHTML = `
+                <button class="btn btn-success btn-sm" onclick="window.riderMarkDelivered('${orderId}')"><i class="fa-solid fa-check"></i> Mark Delivered</button>
+                <button class="btn btn-secondary btn-sm" onclick="window.riderStartTracking('${orderId}', 12.97, 77.61)"><i class="fa-solid fa-map-pin"></i> Start GPS Sharing</button>`;
+        }
+        if (socket) {
+            socket.emit('order_status_changed', { orderId, status: 'dispatched' });
+        }
+    } else {
+        showToast('Failed to accept order. Try again.', 'error');
+    }
+};
+
+window.riderMarkDelivered = async function (orderId) {
+    const res = await apiCall(`/api/orders/${orderId}/status`, 'PUT', { status: 'delivered' }, true);
+    if (res.ok) {
+        showToast('Order marked as delivered! Great work! 🎉', 'success');
+        if (socket) socket.emit('order_status_changed', { orderId, status: 'delivered' });
+
+        // Stop GPS tracking
+        if (riderWatchId != null) {
+            navigator.geolocation.clearWatch(riderWatchId);
+            riderWatchId = null;
+        }
+
+        // Remove the card from UI
+        const card = document.getElementById(`rider-card-${orderId}`);
+        if (card) {
+            card.style.opacity = '0';
+            card.style.transition = 'opacity 0.4s';
+            setTimeout(() => card.remove(), 400);
+        }
+    } else {
+        showToast(`Could not update order status: ${res.data?.message || 'Try again'}`, 'error');
+    }
+};
+
+window.riderStartTracking = function (orderId, destLat, destLng) {
+    const mapDiv = document.getElementById(`rider-map-${orderId}`);
+    if (!mapDiv) return;
+
+    mapDiv.classList.remove('hidden');
+    mapDiv.style.height = '300px';
+
+    // Stop any previous GPS watch first
+    if (riderWatchId != null) {
+        navigator.geolocation.clearWatch(riderWatchId);
+        riderWatchId = null;
+    }
+
+    // Remove any existing route-info bar for this order
+    const oldBar = document.getElementById(`rider-routeinfo-${orderId}`);
+    if (oldBar) oldBar.remove();
+
+    loadGoogleMapsSDK().then(() => {
+        // --- Build the Google Map inside rider-map-${orderId} ---
+        mapDiv.innerHTML = `<div id="rgmap-${orderId}" style="width:100%;height:100%;"></div>`;
+
+        const riderGMap = new google.maps.Map(document.getElementById(`rgmap-${orderId}`), {
+            center: { lat: destLat, lng: destLng },
+            zoom: 14,
+            mapTypeId: 'roadmap',
+            styles: getGoogleMapDarkStyles(),
+            zoomControl: true,
+            streetViewControl: false,
+            mapTypeControl: false,
+        });
+
+        // Route info bar
+        const routeBar = document.createElement('div');
+        routeBar.id = `rider-routeinfo-${orderId}`;
+        routeBar.style.cssText = 'display:flex;gap:20px;padding:10px 16px;background:var(--bg-surface-secondary);font-size:0.85rem;border-radius:0 0 var(--border-radius-md) var(--border-radius-md);';
+        routeBar.innerHTML = `
+            <span><i class="fa-solid fa-road" style="color:var(--primary);margin-right:6px;"></i><span id="rider-dist-${orderId}">Calculating...</span></span>
+            <span><i class="fa-solid fa-clock" style="color:var(--warning);margin-right:6px;"></i><span id="rider-eta-${orderId}">—</span></span>`;
+        mapDiv.insertAdjacentElement('afterend', routeBar);
+
+        // Destination marker
+        const destMarker = new google.maps.Marker({
+            position: { lat: destLat, lng: destLng },
+            map: riderGMap,
+            title: 'Delivery Address',
+            icon: createGMapsIcon('🏠', '#6366f1'),
+            zIndex: 10,
+        });
+        new google.maps.InfoWindow({ content: '<b>Delivery Address</b>' }).open(riderGMap, destMarker);
+
+        const riderDirRenderer = new google.maps.DirectionsRenderer({
+            map: riderGMap,
+            suppressMarkers: true,
+            polylineOptions: { strokeColor: '#f59e0b', strokeWeight: 4, strokeOpacity: 0.85 },
+        });
+
+        let riderMyMarker = null;
+
+        showToast('GPS tracking started! Your location is being shared live.', 'success');
+
+        // --- GPS permission & watchPosition ---
+        if (!navigator.geolocation) {
+            showToast('Geolocation is not supported on this device/browser.', 'warning');
+            return;
+        }
+
+        riderWatchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                const accuracy = pos.coords.accuracy;
+
+                // ① Broadcast live position via Socket.IO (primary)
+                if (socket) {
+                    socket.emit('rider_location_update', {
+                        orderId,
+                        lat,
+                        lng,
+                        accuracy,
+                        riderId: state.user?._id,
+                        timestamp: Date.now(),
+                    });
+                }
+
+                // ② REST fallback (persists last known position in DB)
+                apiCall(`/api/orders/${orderId}/location`, 'PUT', { lat, lng }, true);
+
+                if (!riderGMap) return;
+
+                const myPos = new google.maps.LatLng(lat, lng);
+
+                // Create or move the rider's self-marker
+                if (!riderMyMarker) {
+                    riderMyMarker = new google.maps.Marker({
+                        position: myPos,
+                        map: riderGMap,
+                        title: 'Your Location',
+                        icon: createGMapsIcon('🛵', '#f59e0b', 48),
+                        zIndex: 20,
+                        animation: google.maps.Animation.DROP,
+                    });
+                } else {
+                    riderMyMarker.setPosition(myPos);
+                }
+
+                // Re-draw route from rider to destination
+                new google.maps.DirectionsService().route({
+                    origin: myPos,
+                    destination: new google.maps.LatLng(destLat, destLng),
+                    travelMode: google.maps.TravelMode.DRIVING,
+                }, (result, status) => {
+                    if (status === 'OK') {
+                        riderDirRenderer.setDirections(result);
+                        const leg = result.routes[0]?.legs[0];
+                        if (leg) {
+                            const dEl = document.getElementById(`rider-dist-${orderId}`);
+                            const eEl = document.getElementById(`rider-eta-${orderId}`);
+                            if (dEl) dEl.textContent = leg.distance.text;
+                            if (eEl) eEl.textContent = leg.duration.text;
+                        }
+                    } else {
+                        // Fallback: fit bounds to show both rider and destination
+                        const b = new google.maps.LatLngBounds();
+                        b.extend(myPos);
+                        b.extend({ lat: destLat, lng: destLng });
+                        riderGMap.fitBounds(b, 60);
+                    }
+                });
+            },
+            (err) => {
+                // Detailed GPS error messages
+                console.error('[GPS] watchPosition error:', err);
+                let msg;
+                switch (err.code) {
+                    case 1: msg = 'Location permission denied. Please allow location access in browser settings.'; break;
+                    case 2: msg = 'Position unavailable. Move to an open area and try again.'; break;
+                    case 3: msg = 'GPS request timed out. Ensure location services are on and try again.'; break;
+                    default: msg = 'GPS error: ' + err.message;
+                }
+                showToast(msg, 'error');
+            },
+            { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+        );
+
+    }).catch(err => {
+        console.error('[Maps] riderStartTracking: Google Maps failed to load:', err);
+        showToast('Map unavailable: ' + err.message, 'error');
+    });
 };

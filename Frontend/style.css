@@ -335,6 +335,7 @@ img {
     color: var(--primary);
     background: linear-gradient(135deg, var(--primary), var(--accent));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -595,6 +596,7 @@ img {
 .hero-text h1 span {
     background: linear-gradient(135deg, var(--primary), var(--accent));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -808,6 +810,7 @@ img {
     cursor: pointer;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     height: 2.8rem;
@@ -1360,6 +1363,7 @@ img {
     font-weight: 600;
     display: -webkit-box;
     -webkit-line-clamp: 1;
+    line-clamp: 1;
     -webkit-box-orient: vertical;
     overflow: hidden;
     padding-right: 24px;
@@ -1527,6 +1531,7 @@ img {
     color: var(--text-secondary);
     display: -webkit-box;
     -webkit-line-clamp: 1;
+    line-clamp: 1;
     -webkit-box-orient: vertical;
     overflow: hidden;
     max-width: 70%;
@@ -2151,7 +2156,7 @@ img {
 }
 
 /* ==========================================
-   Zepto & Instamart Style Visual Delivery Tracker
+   Quick Commerce Visual Delivery Tracker
    ========================================== */
 .delivery-progress-track {
     position: relative;
@@ -2227,7 +2232,7 @@ img {
 }
 
 /* ==========================================
-   Upgraded Premium Form Dialogs (Zepto Style)
+   Upgraded Premium Form Dialogs
    ========================================== */
 .admin-form-modal {
     max-width: 650px !important;
@@ -2250,6 +2255,7 @@ img {
     color: var(--text-primary);
     background: linear-gradient(135deg, var(--primary), var(--accent));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -2413,7 +2419,7 @@ img {
     }
 }
 
-/* Card Quantity Selector - Zepto style */
+/* Card Quantity Selector - pill control style */
 .card-qty-selector {
     display: flex;
     align-items: center;
@@ -2452,4 +2458,561 @@ img {
     font-weight: 700;
     font-size: 0.95rem;
     color: var(--text-primary);
+}
+
+/* ==========================================
+   PREMIUM ADDITIONS — Quick Commerce 2.0
+   ========================================== */
+
+/* Hero Delivery Promise Badge */
+.delivery-promise-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(16, 185, 129, 0.05));
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    border-radius: var(--border-radius-full);
+    padding: 8px 18px;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--success);
+    margin-bottom: 20px;
+    letter-spacing: 0.3px;
+}
+
+.delivery-promise-badge .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    animation: liveDot 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+}
+
+@keyframes liveDot {
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.4;
+        transform: scale(0.7);
+    }
+}
+
+/* Discount / MRP Badge on Product Cards */
+.product-discount-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 800;
+    padding: 4px 8px;
+    border-radius: var(--border-radius-full);
+    z-index: 10;
+    letter-spacing: 0.3px;
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35);
+}
+
+.product-mrp {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-decoration: line-through;
+    font-weight: 400;
+    margin-right: 6px;
+}
+
+.product-card-price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+/* Category horizontal scroll pills (Zepto-style) */
+.category-scroll-nav {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 4px 2px 8px 2px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    margin-bottom: 28px;
+}
+
+.category-scroll-nav::-webkit-scrollbar {
+    display: none;
+}
+
+.category-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 18px;
+    border-radius: var(--border-radius-full);
+    border: 1.5px solid var(--border-color);
+    background: var(--bg-surface);
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.category-pill:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-light);
+    transform: translateY(-1px);
+}
+
+.category-pill.active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+    box-shadow: var(--shadow-primary);
+}
+
+/* ==========================================
+   Google Maps Tracker — Live Delivery View
+   ========================================== */
+#google-map-tracker {
+    width: 100%;
+    height: 420px;
+    border-radius: var(--border-radius-lg);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    background: var(--bg-surface-secondary);
+    position: relative;
+}
+
+.tracker-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 28px;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .tracker-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Order Status Pipeline */
+.order-pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+}
+
+.pipeline-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px 0;
+    position: relative;
+}
+
+.pipeline-step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 17px;
+    top: 48px;
+    width: 2px;
+    height: calc(100% - 16px);
+    background: var(--border-color);
+    z-index: 0;
+}
+
+.pipeline-step.done::after {
+    background: var(--success);
+}
+
+.pipeline-step.active::after {
+    background: linear-gradient(to bottom, var(--primary), var(--border-color));
+}
+
+.pipeline-node {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+    transition: all var(--transition-normal);
+}
+
+.pipeline-node.done {
+    background: var(--success);
+    color: #fff;
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
+}
+
+.pipeline-node.active {
+    background: var(--primary);
+    color: #fff;
+    animation: pulseGlow 2s infinite;
+    box-shadow: 0 0 0 4px var(--primary-glow);
+}
+
+.pipeline-node.pending {
+    background: var(--bg-surface-tertiary);
+    color: var(--text-muted);
+    border: 2px solid var(--border-color);
+}
+
+.pipeline-info {
+    padding-top: 4px;
+}
+
+.pipeline-label {
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 2px;
+}
+
+.pipeline-sublabel {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.pipeline-step.done .pipeline-label {
+    color: var(--success);
+}
+
+.pipeline-step.active .pipeline-label {
+    color: var(--primary);
+}
+
+.pipeline-step.pending .pipeline-label {
+    color: var(--text-muted);
+}
+
+/* ETA Countdown */
+.eta-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, var(--warning), #f97316);
+    color: #fff;
+    font-size: 1.1rem;
+    font-weight: 800;
+    padding: 12px 20px;
+    border-radius: var(--border-radius-md);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.35);
+    letter-spacing: 0.3px;
+    margin-bottom: 16px;
+    width: 100%;
+    justify-content: center;
+}
+
+/* ==========================================
+   Rider Portal — embedded in main SPA
+   ========================================== */
+.rider-section {
+    padding: 40px 0 100px;
+}
+
+.rider-order-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: 24px;
+    margin-bottom: 20px;
+    transition: all var(--transition-fast);
+}
+
+.rider-order-card:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md);
+}
+
+.rider-map-container {
+    width: 100%;
+    height: 300px;
+    border-radius: var(--border-radius-md);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    margin: 16px 0;
+    background: var(--bg-surface-secondary);
+}
+
+#rider-live-map {
+    width: 100%;
+    height: 100%;
+}
+
+.rider-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-surface-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-md);
+    padding: 14px 20px;
+    margin-bottom: 20px;
+}
+
+.rider-status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--success);
+    animation: liveDot 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+}
+
+/* Proof of delivery upload area */
+.pod-upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: var(--border-radius-md);
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    background: var(--bg-surface-secondary);
+}
+
+.pod-upload-zone:hover {
+    border-color: var(--primary);
+    background: var(--primary-light);
+}
+
+/* ==========================================
+   Admin Chart container
+   ========================================== */
+.admin-chart-container {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: 28px;
+    margin-bottom: 28px;
+}
+
+.admin-chart-container canvas {
+    max-height: 260px;
+}
+
+/* ==========================================
+   Btn Success variant
+   ========================================== */
+.btn-success {
+    background: var(--success);
+    color: #fff;
+    border: none;
+}
+
+.btn-success:hover {
+    background: #059669;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
+}
+
+.btn-warning {
+    background: var(--warning);
+    color: #000;
+    border: none;
+    font-weight: 700;
+}
+
+.btn-warning:hover {
+    background: #d97706;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(245, 158, 11, 0.35);
+}
+
+/* ==========================================
+   Responsive final pass
+   ========================================== */
+@media (max-width: 600px) {
+    .hero-text h1 {
+        font-size: 2.25rem;
+    }
+
+    .hero-actions-container {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .tracker-layout {
+        grid-template-columns: 1fr;
+    }
+
+    #google-map-tracker {
+        height: 280px;
+    }
+
+    .products-grid {
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 14px;
+    }
+}
+
+/* ==========================================
+   Tracker Layout Grid
+   ========================================== */
+.tracker-layout {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    align-items: start;
+}
+
+@media (max-width: 900px) {
+    .tracker-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ETA Badge */
+.eta-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: linear-gradient(135deg, var(--primary) 0%, #8b5cf6 100%);
+    color: #fff;
+    border-radius: var(--border-radius-lg);
+    padding: 20px 24px;
+    margin-bottom: 12px;
+    font-size: 2rem;
+    font-weight: 800;
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: 2px;
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+}
+
+/* Order Pipeline */
+.order-pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.pipeline-step {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.pipeline-node {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+    transition: all 0.3s;
+}
+
+.pipeline-node.done {
+    background: var(--success);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+}
+
+.pipeline-node.active {
+    background: var(--primary);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    animation: pulse 1.5s infinite;
+}
+
+.pipeline-node.pending {
+    background: var(--bg-surface-secondary);
+    color: var(--text-muted);
+    border: 2px solid var(--border-color);
+}
+
+.pipeline-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.pipeline-sublabel {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.pipeline-step.done .pipeline-label {
+    color: var(--success);
+}
+
+.pipeline-step.active .pipeline-label {
+    color: var(--primary);
+}
+
+.pipeline-step.pending .pipeline-label {
+    color: var(--text-muted);
+}
+
+/* Rider Section */
+.rider-section {
+    padding: 48px 0;
+    min-height: calc(100vh - 160px);
+}
+
+/* Rider Order Card */
+.rider-order-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: 24px;
+    margin-bottom: 20px;
+    transition: box-shadow 0.25s, border-color 0.25s;
+}
+
+.rider-order-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.15);
+}
+
+/* Rider embedded map container */
+.rider-map-container {
+    margin-top: 16px;
+    border-radius: var(--border-radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    min-height: 280px;
+    background: var(--bg-surface-secondary);
+}
+
+/* Small buttons */
+.btn-sm {
+    padding: 8px 14px;
+    font-size: 0.82rem;
+    border-radius: var(--border-radius-md);
+}
+
+/* Rider moving marker pulse animation */
+.rider-marker-ping {
+    animation: markerPulse 1.5s infinite;
+}
+
+@keyframes markerPulse {
+
+    0%,
+    100% {
+        box-shadow: 0 2px 10px rgba(245, 158, 11, 0.5);
+    }
+
+    50% {
+        box-shadow: 0 2px 24px rgba(245, 158, 11, 0.85);
+    }
 }

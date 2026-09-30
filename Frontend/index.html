@@ -4,7 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AuraMart | Premium E-Commerce Experience</title>
+    <title>AuraMart | 10-Min Quick Commerce Delivery</title>
+    <meta name="description"
+        content="AuraMart – premium quick-commerce platform. Get groceries, electronics and more delivered in 10 minutes.">
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,7 +18,11 @@
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
+    <!-- Chart.js (Admin dashboard chart) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
+    <!-- Socket.IO client (loaded from our backend at runtime) -->
+    <script src="/socket.io/socket.io.js"></script>
 
     <!-- Custom Style Sheet -->
     <link rel="stylesheet" href="style.css">
@@ -26,7 +32,8 @@
 
     <!-- Promotion Bar -->
     <div class="promo-bar">
-        <span>✨ Summer Sale: Up to 50% Off on Selected Premium Items. Free Express Shipping! ✨</span>
+        <span>⚡ AuraMart delivers in <strong>10 minutes</strong> — Groceries, Electronics & More. Free shipping on
+            orders over ₹500! ✨</span>
     </div>
 
     <!-- Navigation Header -->
@@ -41,10 +48,14 @@
                 <a href="#/shop" class="nav-item" id="nav-shop">Shop</a>
                 <a href="#/tracker" class="nav-item customer-only hidden" id="nav-tracker"><i
                         class="fa-solid fa-bolt"></i> Live Tracking</a>
+                <a href="#/owner" class="nav-item hidden" id="nav-owner"><i class="fa-solid fa-screwdriver-wrench"></i>
+                    Owner</a>
+                <a href="#/rider" class="nav-item hidden" id="nav-rider"><i class="fa-solid fa-motorcycle"></i>
+                    Rider</a>
             </nav>
 
             <div class="search-bar-container">
-                <input type="text" id="global-search" placeholder="Search premium products...">
+                <input type="text" id="global-search" placeholder="Search products...">
                 <button type="button" id="search-btn"><i class="fa-solid fa-magnifying-glass"></i></button>
             </div>
 
@@ -97,7 +108,13 @@
         <div class="cart-drawer-backdrop" id="cart-drawer-backdrop"></div>
         <div class="cart-drawer-content">
             <div class="cart-drawer-header">
-                <h3>Your Bag <span class="cart-drawer-count" id="cart-drawer-count">(0)</span></h3>
+                <div>
+                    <h3>Your Bag <span class="cart-drawer-count" id="cart-drawer-count">(0)</span></h3>
+                    <div class="delivery-promise-badge" style="margin-top:8px; font-size: 0.75rem; padding: 4px 12px;">
+                        <span class="pulse-dot"></span>
+                        <span>10-min delivery</span>
+                    </div>
+                </div>
                 <button class="close-drawer-btn" id="close-cart-btn">&times;</button>
             </div>
 
@@ -115,7 +132,8 @@
                     <span>Subtotal</span>
                     <span class="cart-total-price" id="cart-subtotal">₹0.00</span>
                 </div>
-                <p class="cart-shipping-info">Shipping and taxes calculated at checkout.</p>
+                <p class="cart-shipping-info"><i class="fa-solid fa-truck-fast" style="color:var(--success);"></i> Free
+                    delivery on orders over ₹500</p>
                 <div class="cart-drawer-actions">
                     <button class="btn btn-secondary w-full" id="clear-cart-btn">Clear Cart</button>
                     <button class="btn btn-primary w-full" id="checkout-btn">Checkout</button>
@@ -156,8 +174,7 @@
         <div class="footer-container">
             <div class="footer-brand-section">
                 <a href="#/" class="logo"><span class="logo-accent">Aura</span>Mart</a>
-                <p class="footer-tagline">Crafting modern shopping experiences with sleek styles and micro-interactions.
-                </p>
+                <p class="footer-tagline">India's fastest quick-commerce platform. From cart to door in 10 minutes.</p>
                 <div class="social-links">
                     <a href="#"><i class="fa-brands fa-x-twitter"></i></a>
                     <a href="#"><i class="fa-brands fa-instagram"></i></a>
@@ -171,28 +188,28 @@
                     <h4>Shop</h4>
                     <a href="#/shop?category=Electronics">Electronics</a>
                     <a href="#/shop?category=Fashion">Fashion</a>
-                    <a href="#/shop?category=Home%20%26%20Living">Home & Living</a>
-                    <a href="#/shop?category=Accessories">Accessories</a>
+                    <a href="#/shop?category=Home%20%26%20Living">Home &amp; Living</a>
+                    <a href="#/shop?category=Groceries">Groceries</a>
                 </div>
                 <div class="footer-column">
                     <h4>Support</h4>
                     <a href="#">Contact Us</a>
                     <a href="#">FAQs</a>
-                    <a href="#">Shipping & Returns</a>
+                    <a href="#">Shipping &amp; Returns</a>
                     <a href="#">Privacy Policy</a>
                 </div>
                 <div class="footer-column">
                     <h4>Developer</h4>
-                    <a href="/admin.html" target="_blank">Owner Portal</a>
-                    <a href="/delivery.html" target="_blank">Rider Portal</a>
+                    <a href="/admin-login.html" target="_blank">Owner Portal</a>
+                    <a href="#/rider">Rider Portal</a>
                     <a href="#/auth">Account Portal</a>
                     <a href="https://github.com">GitHub Repository</a>
-                    <span class="badge-tech">Node.js + Express + MongoDB</span>
+                    <span class="badge-tech">Node.js + Express + MongoDB + Socket.IO</span>
                 </div>
             </div>
         </div>
         <div class="footer-bottom">
-            <p>&copy; 2026 AuraMart. All rights reserved. Created with premium UI designs.</p>
+            <p>&copy; 2026 AuraMart. All rights reserved. Built with ⚡ quick-commerce technology.</p>
         </div>
     </footer>
 
